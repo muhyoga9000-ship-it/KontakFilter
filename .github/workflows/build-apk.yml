@@ -26,12 +26,13 @@ jobs:
           ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: File ZIP tidak ditemukan di folder utama."
+            echo "ERROR: File ZIP tidak ditemukan di folder utama repository."
+            echo "Upload ZIP project Android kamu ke folder utama repository."
             exit 1
           fi
 
           echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
-          echo "Source ZIP: $ZIP_FILE"
+          echo "File sumber: $ZIP_FILE"
 
       - name: Extract ZIP
         shell: bash
@@ -45,18 +46,24 @@ jobs:
           \) -print -quit)"
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: File settings.gradle tidak ditemukan."
+            echo "ERROR: settings.gradle atau settings.gradle.kts tidak ditemukan."
+            echo "Isi ZIP yang ditemukan:"
             find extracted -maxdepth 5 -type f | head -200
             exit 1
           fi
 
-          echo "PROJECT_DIR=$(dirname "$SETTINGS_FILE")" >> "$GITHUB_ENV"
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Folder project: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - name: Install Android SDK command-line tools
         shell: bash
@@ -67,7 +74,8 @@ jobs:
           mkdir -p "$HOME/android-sdk/cmdline-tools"
           cd /tmp
 
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+          wget -q \
+            https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
             -O android-tools.zip
 
           mkdir -p android-tools
@@ -78,6 +86,7 @@ jobs:
             "$HOME/android-sdk/cmdline-tools/latest/"
 
           echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> "$GITHUB_ENV"
           echo "$HOME/android-sdk/platform-tools" >> "$GITHUB_PATH"
           echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
@@ -85,6 +94,7 @@ jobs:
         shell: bash
         run: |
           export ANDROID_HOME="$HOME/android-sdk"
+          export ANDROID_SDK_ROOT="$HOME/android-sdk"
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
 
           yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses || true
@@ -93,6 +103,24 @@ jobs:
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+
+      - name: Verify Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          if [ "$ANDROID_HOME" != "$ANDROID_SDK_ROOT" ]; then
+            echo "ERROR: Lokasi SDK berbeda."
+            exit 1
+          fi
+
+          if [ ! -d "$ANDROID_HOME/platforms/android-35" ]; then
+            echo "ERROR: Android SDK Platform 35 tidak ditemukan."
+            exit 1
+          fi
+
+          echo "Android SDK berhasil diperiksa."
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -103,6 +131,15 @@ jobs:
         shell: bash
         run: |
           cd "$PROJECT_DIR"
+
+          export ANDROID_HOME="$HOME/android-sdk"
+          export ANDROID_SDK_ROOT="$HOME/android-sdk"
+
+          if [ -f local.properties ]; then
+            sed -i '/^sdk\.dir=/d' local.properties
+          fi
+
+          echo "Memulai build APK..."
 
           if [ -f gradlew ]; then
             chmod +x gradlew
@@ -115,15 +152,20 @@ jobs:
         shell: bash
         run: |
           APK="$(find "$PROJECT_DIR" -type f \
-            -path '*/build/outputs/apk/*/*.apk' -print -quit)"
+            -path '*/build/outputs/apk/*/*.apk' \
+            -print -quit)"
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK tidak ditemukan."
+            echo "ERROR: APK tidak ditemukan setelah proses build."
+            echo "Periksa log langkah Build APK."
             exit 1
           fi
 
           mkdir -p output
           cp "$APK" output/KontakFilter-debug.apk
+
+          echo "APK berhasil dibuat:"
+          ls -lh output/KontakFilter-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -131,3 +173,4 @@ jobs:
           name: KontakFilter-debug-apk
           path: output/KontakFilter-debug.apk
           if-no-files-found: error
+          retention-days: 14
